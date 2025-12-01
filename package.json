@@ -1,0 +1,6 @@
+{
+    "name": "license-manager-fullstack",
+    "scripts": {
+      "dev": "node dev.js"
+    }
+  }
