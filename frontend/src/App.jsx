@@ -11,6 +11,7 @@ import ExportPage from './pages/ExportPage'
 import DocsPage from './pages/DocsPage'  
 import SettingsPage from './pages/SettingsPage'
 import NotFound from './pages/NotFound'
+import Workplaces from './pages/Workplaces'
 
 // Защищённый роут
 const ProtectedRoute = ({ children }) => {
@@ -28,6 +29,7 @@ const Navigation = () => {
 
   const navItems = [
     { to: '/dashboard', label: 'Лицензии', icon: '🔑' },
+    { to: '/workplaces', label: 'Рабочие места', icon: '💻' },
     { to: '/stats', label: 'Статистика', icon: '📊' },
     { to: '/export', label: 'Экспорт', icon: '📥' },
     { to: '/docs', label: 'Документы', icon: '🗎'},
@@ -90,6 +92,7 @@ function App() {
           <Route path="/export" element={<ProtectedRoute><ExportPage /></ProtectedRoute>} />
           <Route path="/docs" element={<ProtectedRoute><DocsPage/></ProtectedRoute>} />
           <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
+          <Route path="/workplaces" element={<ProtectedRoute><Workplaces /></ProtectedRoute>} />
           
           <Route path="*" element={<NotFound />} />
         </Routes>

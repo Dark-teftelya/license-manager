@@ -19,13 +19,18 @@ import (
 )
 
 type License struct {
-	ID          int       `json:"id"`
-	Key         string    `json:"key"`
-	Description string    `json:"description"`
-	ExpiryDate  string    `json:"expiry_date"`
-	MaxUses     int       `json:"max_uses"`
-	CurrentUses int       `json:"current_uses"`
-	CreatedAt   time.Time `json:"created_at"`
+    ID           int       `json:"id"`
+    Key          string    `json:"key"`
+    Description  string    `json:"description"`
+    ExpiryDate   string    `json:"expiry_date"`
+    MaxUses      int       `json:"max_uses"`
+    CurrentUses  int       `json:"current_uses"`
+    CreatedAt    time.Time `json:"created_at"`
+
+    // ←←← НОВЫЕ ПОЛЯ
+    Cost         float64   `json:"cost,omitempty"`
+    Supplier     string    `json:"supplier,omitempty"`
+    ActivatedOn  string    `json:"activated_on,omitempty"`  // например: "PC-IVANOV, НОУТ-БУХ, Сервер-01"
 }
 
 var db *sql.DB
@@ -47,17 +52,28 @@ func main() {
 			expiry_date DATE,
 			max_uses INTEGER DEFAULT 5,
 			current_uses INTEGER DEFAULT 0,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			
+			-- ЭТО ТРИ НОВЫХ ПОЛЯ — ДОБАВЛЯЕМ, НИЧЕГО НЕ ЛОМАЯ
+			cost REAL DEFAULT 0,                    -- Стоимость ключа
+			supplier TEXT,                          -- Поставщик (например: ООО "СофтЛайн", Microsoft, 1С)
+			activated_on TEXT                       -- На каких рабочих местах (через запятую или JSON)
 		);
-
-		CREATE TABLE IF NOT EXISTS activation_log (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			license_key TEXT NOT NULL,
-			activated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-		);
-
-		CREATE INDEX IF NOT EXISTS idx_log_date ON activation_log(activated_at);
 	`)
+
+	
+	_, err = db.Exec(`
+	CREATE TABLE IF NOT EXISTS activation_log (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		license_key TEXT NOT NULL,
+		activated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		device_name TEXT,
+		browser TEXT
+	);
+	`)
+	if err != nil {
+	log.Fatal("Не удалось создать таблицу activation_log:", err)
+	}
 
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS settings (
@@ -79,7 +95,10 @@ func main() {
 		log.Fatal("Ошибка создания таблиц:", err)
 	}
 
-	
+	db.Exec("ALTER TABLE licenses ADD COLUMN cost REAL DEFAULT 0")
+	db.Exec("ALTER TABLE licenses ADD COLUMN supplier TEXT")
+	db.Exec("ALTER TABLE licenses ADD COLUMN activated_on TEXT")
+
 	// === ЗАПОЛНЯЕМ НАСТРОЙКИ И ДОКУМЕНТЫ ПО УМОЛЧАНИЮ (БЕЗ ОШИБОК С КАВЫЧКАМИ) ===
 	_, err = db.Exec(`
 	INSERT OR REPLACE INTO settings (key, value) VALUES
@@ -203,9 +222,56 @@ func main() {
 	mux.HandleFunc("/api/docs/eula", handleDocEULA)           // HTML документ
 	mux.HandleFunc("/api/docs/privacy", handleDocPrivacy)     // HTML
 	mux.HandleFunc("/api/docs/offer", handleDocOffer)         // HTML
+	mux.HandleFunc("/api/workplaces", handleWorkplaces)
 
 	fmt.Println("Сервер запущен → http://localhost:8080")
 	log.Fatal(http.ListenAndServe(":8080", corsMiddleware(mux)))
+}
+
+func handleWorkplaces(w http.ResponseWriter, r *http.Request) {
+    w.Header().Set("Content-Type", "application/json")
+    w.Header().Set("Access-Control-Allow-Origin", "*")
+
+    if r.Method == "GET" {
+        var config struct {
+            Rooms   []string        `json:"rooms"`
+            Devices []map[string]any `json:"devices"`
+        }
+
+        // Загружаем из settings
+        var jsonStr string
+        db.QueryRow("SELECT value FROM settings WHERE key = 'workplaces_config'").Scan(&jsonStr)
+        if jsonStr != "" {
+            json.Unmarshal([]byte(jsonStr), &config)
+        }
+
+        json.NewEncoder(w).Encode(config)
+        return
+    }
+
+    if r.Method == "POST" {
+        var input struct {
+            Rooms   []string        `json:"rooms"`
+            Devices []map[string]any `json:"devices"`
+        }
+
+        if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+            http.Error(w, "Invalid JSON", 400)
+            return
+        }
+
+        jsonData, _ := json.Marshal(input)
+        _, err := db.Exec(`INSERT OR REPLACE INTO settings (key, value) VALUES ('workplaces_config', ?)`, string(jsonData))
+        if err != nil {
+            http.Error(w, "Save error", 500)
+            return
+        }
+
+        json.NewEncoder(w).Encode(map[string]bool{"success": true})
+        return
+    }
+
+    http.Error(w, "Method not allowed", 405)
 }
 
 // CORS
@@ -228,36 +294,63 @@ func handleLicenses(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case "GET":
-		rows, _ := db.Query("SELECT id, key, description, expiry_date, max_uses, current_uses, created_at FROM licenses ORDER BY created_at DESC")
+		rows, err := db.Query(`SELECT 
+			id, key, description, expiry_date, max_uses, current_uses, created_at,
+			COALESCE(cost, 0) as cost,
+			COALESCE(supplier, '') as supplier,
+			COALESCE(activated_on, '') as activated_on
+		FROM licenses ORDER BY created_at DESC`)
+		if err != nil {
+			http.Error(w, "DB error", 500)
+			return
+		}
 		defer rows.Close()
 
 		var licenses []License
 		for rows.Next() {
 			var l License
-			rows.Scan(&l.ID, &l.Key, &l.Description, &l.ExpiryDate, &l.MaxUses, &l.CurrentUses, &l.CreatedAt)
+			err := rows.Scan(
+				&l.ID,
+				&l.Key,
+				&l.Description,
+				&l.ExpiryDate,
+				&l.MaxUses,
+				&l.CurrentUses,
+				&l.CreatedAt,
+				&l.Cost,
+				&l.Supplier,
+				&l.ActivatedOn,
+			)
+			if err != nil {
+				continue
+			}
 			licenses = append(licenses, l)
 		}
 		json.NewEncoder(w).Encode(licenses)
 
 	case "POST":
 		var input struct {
-			Description string `json:"description"`
-			ExpiryDate  string `json:"expiry_date"`
-			MaxUses     int    `json:"max_uses"`
+			Description string  `json:"description"`
+			ExpiryDate  string  `json:"expiry_date"`
+			MaxUses     int     `json:"max_uses"`
+			Cost        float64 `json:"cost"`
+			Supplier    string  `json:"supplier"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 			http.Error(w, "Invalid JSON", 400)
 			return
 		}
-
+	
 		key := generateKey()
-		_, err := db.Exec("INSERT INTO licenses (key, description, expiry_date, max_uses) VALUES (?, ?, ?, ?)",
-			key, input.Description, input.ExpiryDate, input.MaxUses)
+		_, err := db.Exec(`INSERT INTO licenses 
+			(key, description, expiry_date, max_uses, cost, supplier) 
+			VALUES (?, ?, ?, ?, ?, ?)`,
+			key, input.Description, input.ExpiryDate, input.MaxUses, input.Cost, input.Supplier)
 		if err != nil {
 			http.Error(w, "Ошибка создания", 500)
 			return
 		}
-
+	
 		w.WriteHeader(201)
 		json.NewEncoder(w).Encode(map[string]string{"key": key})
 
@@ -360,52 +453,70 @@ func generateKey() string {
 
 // === СТАТИСТИКА ===
 func handleStats(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "GET" {
-		http.Error(w, "Only GET", 405)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
+    if r.Method != "GET" {
+        http.Error(w, "Only GET", 405)
+        return
+    }
+    w.Header().Set("Content-Type", "application/json")
 
-	var s struct {
-		Total              int `json:"total"`
-		Active             int `json:"active"`
-		TotalEverActivated int `json:"total_ever_activated"`
-		ExpiringSoon       int `json:"expiring_soon"`
-	}
-	db.QueryRow("SELECT COUNT(*) FROM licenses").Scan(&s.Total)
-	today := time.Now().Format("2006-01-02")
-	db.QueryRow("SELECT COUNT(*) FROM licenses WHERE expiry_date >= ? AND current_uses < max_uses", today).Scan(&s.Active)
-	db.QueryRow("SELECT COALESCE(SUM(current_uses),0) FROM licenses").Scan(&s.TotalEverActivated)
-	weekLater := time.Now().Add(7*24*time.Hour).Format("2006-01-02")
-	db.QueryRow("SELECT COUNT(*) FROM licenses WHERE expiry_date >= ? AND expiry_date <= ?", today, weekLater).Scan(&s.ExpiringSoon)
+    var s struct {
+        Total              int `json:"total"`
+        Active             int `json:"active"`
+        TotalEverActivated int `json:"total_ever_activated"`
+        ExpiringSoon       int `json:"expiring_soon"`
+        ActivationsMonth   int `json:"activations_month"` // ←←← НОВОЕ ПОЛЕ!
+    }
 
-	json.NewEncoder(w).Encode(s)
+    db.QueryRow("SELECT COUNT(*) FROM licenses").Scan(&s.Total)
+
+    today := time.Now().Format("2006-01-02")
+    db.QueryRow("SELECT COUNT(*) FROM licenses WHERE expiry_date >= ? AND current_uses < max_uses", today).Scan(&s.Active)
+
+    db.QueryRow("SELECT COALESCE(SUM(current_uses),0) FROM licenses").Scan(&s.TotalEverActivated)
+
+    weekLater := time.Now().Add(7 * 24 * time.Hour).Format("2006-01-02")
+    db.QueryRow("SELECT COUNT(*) FROM licenses WHERE expiry_date >= ? AND expiry_date <= ?", today, weekLater).Scan(&s.ExpiringSoon)
+
+    // ←←← Активаций за последние 30 дней
+    db.QueryRow("SELECT COUNT(*) FROM activation_log WHERE activated_at >= date('now', '-30 days')").Scan(&s.ActivationsMonth)
+
+    json.NewEncoder(w).Encode(s)
 }
 
-// === ГРАФИК АКТИВАЦИЙ ===
+// === ГРАФИК АКТИВАЦИЙ  ===
 func handleActivationsChart(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "GET" {
-		http.Error(w, "Only GET", 405)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
+    if r.Method != "GET" {
+        http.Error(w, "Only GET", 405)
+        return
+    }
+    w.Header().Set("Content-Type", "application/json")
 
-	rows, _ := db.Query(`
-		SELECT DATE(activated_at) as day, COUNT(*) as cnt
-		FROM activation_log
-		WHERE activated_at >= date('now', '-30 days')
-		GROUP BY day ORDER BY day
-	`)
-	defer rows.Close()
+    rows, err := db.Query(`
+        SELECT DATE(activated_at) as day, COUNT(*) as cnt
+        FROM activation_log
+        WHERE activated_at >= date('now', '-30 days')
+        GROUP BY day ORDER BY day
+    `)
+    if err != nil {
+        // Если таблицы нет — просто возвращаем пустой массив
+        json.NewEncoder(w).Encode([]map[string]any{})
+        return
+    }
+    defer rows.Close()
 
-	type Day struct{ Day string `json:"day"`; Count int `json:"count"` }
-	var data []Day
-	for rows.Next() {
-		var d Day
-		rows.Scan(&d.Day, &d.Count)
-		data = append(data, d)
-	}
-	json.NewEncoder(w).Encode(data)
+    type Day struct {
+        Day   string `json:"day"`
+        Count int    `json:"count"`
+    }
+    var data []Day
+    for rows.Next() {
+        var d Day
+        if err := rows.Scan(&d.Day, &d.Count); err != nil {
+            continue
+        }
+        data = append(data, d)
+    }
+    json.NewEncoder(w).Encode(data)
 }
 
 // === ИМПОРТ CSV + XLSX ===

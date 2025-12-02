@@ -7,13 +7,37 @@ const LicenseManager = () => {
   const [search, setSearch] = useState('')
   const [activations, setActivations] = useState([])
   const [isLoading, setIsLoading] = useState(false)
-  const [form, setForm] = useState({ description: '', expiry_date: '', max_uses: 5 })
+  
+  const [form, setForm] = useState({ 
+    description: '', 
+    expiry_date: '', 
+    max_uses: 5,
+    cost: '', 
+    supplier: '' 
+  })
+
   const [validateKey, setValidateKey] = useState('')
   const [validationResult, setValidationResult] = useState(null)
   const [editingId, setEditingId] = useState(null)
-  const [editForm, setEditForm] = useState({ description: '', expiry_date: '', max_uses: 0 })
+  const [editForm, setEditForm] = useState({ 
+    description: '', 
+    expiry_date: '', 
+    max_uses: 0, 
+    cost: 0, 
+    supplier: '' 
+  })
 
-  // Загружаем последние активации из localStorage
+  // Определяем браузер один раз
+  const getBrowserInfo = () => {
+    const ua = navigator.userAgent
+    let browser = 'Неизвестно'
+    if (ua.includes('Chrome')) browser = 'Google Chrome'
+    else if (ua.includes('Firefox')) browser = 'Mozilla Firefox'
+    else if (ua.includes('Safari') && !ua.includes('Chrome')) browser = 'Safari'
+    else if (ua.includes('Edg')) browser = 'Microsoft Edge'
+    return browser
+  }
+
   useEffect(() => {
     const saved = localStorage.getItem('license-activations')
     if (saved) {
@@ -25,22 +49,20 @@ const LicenseManager = () => {
     }
   }, [])
 
-  // Сохраняем активации при изменении
   useEffect(() => {
     localStorage.setItem('license-activations', JSON.stringify(activations))
   }, [activations])
 
-  // Загрузка лицензий при старте
   useEffect(() => {
     fetchLicenses()
   }, [])
 
-  // Поиск
   useEffect(() => {
     const lowerSearch = search.toLowerCase()
     const filtered = allLicenses.filter(l => 
-      l.description.toLowerCase().includes(lowerSearch) ||
-      l.key.toLowerCase().includes(lowerSearch)
+      l.description?.toLowerCase().includes(lowerSearch) ||
+      l.key?.toLowerCase().includes(lowerSearch) ||
+      l.supplier?.toLowerCase().includes(lowerSearch)
     )
     setLicenses(filtered)
   }, [search, allLicenses])
@@ -58,21 +80,17 @@ const LicenseManager = () => {
 
   const withLoading = async (cb) => {
     setIsLoading(true)
-  
-    const minDuration = 3800 // ← 3.8 секунды — идеально для вау-эффекта
+    const minDuration = 3800
     const startTime = Date.now()
-  
+
     try {
       await cb()
     } finally {
       const elapsed = Date.now() - startTime
       const remaining = minDuration - elapsed
-  
-      // Если операция закончилась быстро — ждём остаток времени
       if (remaining > 0) {
         await new Promise(resolve => setTimeout(resolve, remaining))
       }
-  
       setIsLoading(false)
     }
   }
@@ -83,15 +101,21 @@ const LicenseManager = () => {
       const res = await fetch('/api/licenses', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form)
+        body: JSON.stringify({
+          description: form.description,
+          expiry_date: form.expiry_date,
+          max_uses: parseInt(form.max_uses) || 5,
+          cost: parseFloat(form.cost) || 0,
+          supplier: form.supplier || 'Не указан'
+        })
       })
 
       if (res.ok) {
         const { key } = await res.json()
-        setForm({ description: '', expiry_date: '', max_uses: 5 })
+        setForm({ description: '', expiry_date: '', max_uses: 5, cost: '', supplier: '' })
         await fetchLicenses()
         navigator.clipboard.writeText(key)
-        showToast(`Лицензия создана! Ключ скопирован в буфер: ${key}`)
+        showToast(`Лицензия создана! Ключ скопирован: ${key}`)
       } else {
         showToast('Ошибка создания лицензии', 'error')
       }
@@ -126,36 +150,35 @@ const LicenseManager = () => {
       setValidationResult(data)
 
       if (data.valid) {
-        // ← ЭТО САМОЕ ВАЖНОЕ: обновляем список лицензий!
         await fetchLicenses()
 
-        // Сохраняем активацию в localStorage (для красоты)
+        const deviceName = prompt('На каком компьютере активирован ключ?', 'PC-ИВАНОВ') || 'Неизвестное устройство'
+
         const newActivation = {
           id: Date.now(),
           key: keyToSend,
           activated_at: new Date().toISOString(),
-          device: navigator.userAgent.slice(0, 100) + '...'
+          activated_on: deviceName,
+          browser: getBrowserInfo()
         }
         setActivations(prev => [newActivation, ...prev].slice(0, 50))
 
-        showToast('Ключ успешно активирован!')
-        setValidateKey('') // очищаем поле
+        showToast(`Активировано на: ${deviceName} (${getBrowserInfo()})`)
+        setValidateKey('')
       } else {
         showToast(data.error || 'Ключ недействителен', 'error')
       }
     })
   }
 
-  useEffect(() => {
-    fetchLicenses()
-  }, [])
-
   const startEdit = (l) => {
     setEditingId(l.id)
     setEditForm({
-      description: l.description,
-      expiry_date: l.expiry_date.split('T')[0],
-      max_uses: l.max_uses
+      description: l.description || '',
+      expiry_date: l.expiry_date?.split('T')[0] || '',
+      max_uses: l.max_uses || 5,
+      cost: l.cost || 0,
+      supplier: l.supplier || ''
     })
   }
 
@@ -175,11 +198,7 @@ const LicenseManager = () => {
   }
 
   const showToast = (msg, type = 'success') => {
-    const colors = {
-      success: 'bg-green-600',
-      error: 'bg-red-600'
-    }
-
+    const colors = { success: 'bg-green-600', error: 'bg-red-600' }
     const t = document.createElement('div')
     t.textContent = msg
     t.className = `fixed bottom-24 right-8 ${colors[type]} text-white px-8 py-5 rounded-2xl shadow-2xl z-50 font-semibold text-lg animate-bounce`
@@ -194,7 +213,6 @@ const LicenseManager = () => {
 
   return (
     <div className={styles.container}>
-      {/* Загрузка */}
       {isLoading && (
         <div className={styles.loadingOverlay}>
           <img src="/cd-disk.gif" alt="loading" className={styles.loadingGif} />
@@ -204,56 +222,77 @@ const LicenseManager = () => {
 
       <div className={styles.wrapper}>
         <header className={styles.header}>
-          <h1 className={styles.headerTitle}>Управление лицензиями</h1>
+          <h1 className={styles.headerTitle}>Лицензионное программное обеспечение</h1>
           <p className={styles.headerSubtitle}>
-            Полные UUID-ключи • Неограниченные активации • Полный контроль
+            Полный контроль • Стоимость • Поставщики • Рабочие места • Браузер
           </p>
         </header>
 
         <input
           type="text"
-          placeholder="Поиск по описанию или ключу..."
+          placeholder="Поиск по описанию, ключу или поставщику..."
           value={search}
           onChange={e => setSearch(e.target.value)}
           className={styles.searchInput}
         />
 
-        {/* Создание лицензии */}
+        {/* Создание лицензии — ПОЛЯ НОРМАЛЬНОГО РАЗМЕРА */}
         <div className={styles.createSection}>
           <h2 className={styles.sectionTitle}>Создать новую лицензию</h2>
-          <form onSubmit={handleSubmit} className={styles.createForm}>
+          <form onSubmit={handleSubmit} className="space-y-6">
             <textarea
               required
-              placeholder="Описание (например: Premium на 1 год для @username)"
-              className={styles.textarea}
-              rows="3"
+              placeholder="Описание лицензии (например: Windows 11 Pro для бухгалтерии)"
+              className="w-full px-5 py-4 border border-gray-300 rounded-xl text-base focus:ring-2 focus:ring-purple-500"
+              rows="4"
               value={form.description}
               onChange={e => setForm({ ...form, description: e.target.value })}
             />
-            <input
-              required
-              type="date"
-              className={styles.input}
-              value={form.expiry_date}
-              onChange={e => setForm({ ...form, expiry_date: e.target.value })}
-            />
-            <input
-              required
-              type="number"
-              min="1"
-              placeholder="Макс. активаций (1-999)"
-              className={styles.input}
-              value={form.max_uses}
-              onChange={e => setForm({ ...form, max_uses: +e.target.value })}
-            />
-            <button type="submit" className={styles.submitBtn}>
-              Создать и скопировать ключ
-            </button>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <input
+                type="text"
+                placeholder="Поставщик (например: Microsoft, 1С, ООО «СофтЛайн»)"
+                className="w-full px-5 py-4 border border-gray-300 rounded-xl text-base focus:ring-2 focus:ring-indigo-500"
+                value={form.supplier}
+                onChange={e => setForm({ ...form, supplier: e.target.value })}
+              />
+              <input
+                type="number"
+                step="0.01"
+                placeholder="Стоимость ключа (₽)"
+                className="w-full px-5 py-4 border border-gray-300 rounded-xl text-base font-bold text-green-700 focus:ring-2 focus:ring-green-500"
+                value={form.cost}
+                onChange={e => setForm({ ...form, cost: e.target.value })}
+              />
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <input
+                required
+                type="date"
+                className="w-full px-5 py-4 border border-gray-300 rounded-xl text-base"
+                value={form.expiry_date}
+                onChange={e => setForm({ ...form, expiry_date: e.target.value })}
+              />
+              <input
+                required
+                type="number"
+                min="1"
+                placeholder="Макс. активаций"
+                className="w-full px-5 py-4 border border-gray-300 rounded-xl text-base"
+                value={form.max_uses}
+                onChange={e => setForm({ ...form, max_uses: +e.target.value })}
+              />
+              <button type="submit" className="w-full bg-gradient-to-r from-purple-600 to-pink-600 text-white font-bold py-4 rounded-xl hover:from-purple-700 hover:to-pink-700 transition shadow-lg">
+                Создать и скопировать ключ
+              </button>
+            </div>
           </form>
         </div>
 
         {/* Проверка ключа + последние активации */}
-        <div className={styles.gridTwoCols}>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-10">
           <div className={styles.validateSection}>
             <h2 className={styles.sectionTitle}>Проверить ключ</h2>
             <div className={styles.validateInputWrapper}>
@@ -272,11 +311,6 @@ const LicenseManager = () => {
             {validationResult && (
               <div className={`${styles.validationResult} ${validationResult.valid ? styles.validationSuccess : styles.validationError}`}>
                 {validationResult.valid ? 'КЛЮЧ УСПЕШНО АКТИВИРОВАН!' : 'ОШИБКА: ' + (validationResult.error || 'неизвестно')}
-                {validationResult.remaining_uses !== undefined && (
-                  <div className="mt-3 text-gray-700">
-                    Осталось активаций: <strong>{validationResult.remaining_uses}</strong>
-                  </div>
-                )}
               </div>
             )}
           </div>
@@ -285,15 +319,28 @@ const LicenseManager = () => {
             <h2 className={styles.sectionTitle}>Последние активации</h2>
             <div className="space-y-4 max-h-96 overflow-y-auto">
               {activations.length === 0 ? (
-                <p className="text-gray-500 text-center py-10 text-lg">Активаций пока нет</p>
+                <p className="text-gray-500 text-center py-12 text-lg">Активаций пока нет</p>
               ) : (
                 activations.map(a => (
-                  <div key={a.id} className={styles.activationItem}>
-                    <div className={styles.activationKey}>{a.key}</div>
-                    <div className={styles.activationDate}>
-                      {new Date(a.activated_at).toLocaleString('ru-RU')}
+                  <div key={a.id} className="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-xl p-6 border border-indigo-200 shadow-md">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <div className="font-mono text-lg font-bold text-indigo-700">{a.key}</div>
+                        <div className="text-sm text-gray-600 mt-1">
+                          {new Date(a.activated_at).toLocaleString('ru-RU')}
+                        </div>
+                      </div>
+                      <div className="text-right space-y-2">
+                        <div className="text-xs text-gray-500">Рабочее место:</div>
+                        <div className="font-bold text-purple-700 bg-white px-4 py-2 rounded-lg shadow">
+                          {a.activated_on}
+                        </div>
+                        <div className="text-xs text-gray-500 mt-3">Браузер:</div>
+                        <div className="text-sm font-medium text-blue-600">
+                          {a.browser}
+                        </div>
+                      </div>
                     </div>
-                    <div className={styles.activationDevice}>{a.device}</div>
                   </div>
                 ))
               )}
@@ -302,7 +349,7 @@ const LicenseManager = () => {
         </div>
 
         {/* Таблица всех лицензий */}
-        <div className={styles.tableSection}>
+        <div className={styles.tableSection + " mt-12"}>
           <div className={styles.tableHeader}>
             <h2 className={styles.tableHeaderTitle}>Все лицензии ({licenses.length})</h2>
           </div>
@@ -312,6 +359,8 @@ const LicenseManager = () => {
                 <tr>
                   <th className={styles.tableTh}>Ключ</th>
                   <th className={styles.tableTh}>Описание</th>
+                  <th className={styles.tableTh}>Поставщик</th>
+                  <th className={styles.tableTh}>Стоимость</th>
                   <th className={styles.tableTh}>Действует до</th>
                   <th className={styles.tableTh}>Использовано</th>
                   <th className={styles.tableTh}>Действия</th>
@@ -326,7 +375,7 @@ const LicenseManager = () => {
 
                   return (
                     <tr key={l.id} className={styles.tableRow}>
-                      <td className={styles.tableTh}>
+                      <td className={styles.tableTd}>
                         <div className={styles.keyCell}>
                           <span className={styles.keyBadge}>{l.key}</span>
                           <button onClick={() => copyToClipboard(l.key)} className={styles.copyBtn}>
@@ -334,14 +383,28 @@ const LicenseManager = () => {
                           </button>
                         </div>
                       </td>
-                      <td className={styles.tableTh}>{l.description || '—'}</td>
-                      <td className={styles.tableTh}>{new Date(l.expiry_date).toLocaleDateString('ru-RU')}</td>
-                      <td className={styles.tableTh}>
+                      <td className={styles.tableTd}>{l.description || '—'}</td>
+                      <td className={styles.tableTd}>
+                        <span className="font-medium text-indigo-600">
+                          {l.supplier || '—'}
+                        </span>
+                      </td>
+                      <td className={styles.tableTd}>
+                        {l.cost > 0 ? (
+                          <span className="font-bold text-green-600">
+                            {Number(l.cost).toLocaleString('ru-RU')} ₽
+                          </span>
+                        ) : (
+                          <span className="text-gray-400">—</span>
+                        )}
+                      </td>
+                      <td className={styles.tableTd}>{new Date(l.expiry_date).toLocaleDateString('ru-RU')}</td>
+                      <td className={styles.tableTd}>
                         <span className={`${styles.statusBadge} ${statusClass}`}>
                           {status} ({l.current_uses}/{l.max_uses})
                         </span>
                       </td>
-                      <td className={styles.tableTh}>
+                      <td className={styles.tableTd}>
                         <button onClick={() => startEdit(l)} className={styles.editBtn}>Изменить</button>
                         <button onClick={() => handleDelete(l.id)} className={styles.deleteBtn}>Удалить</button>
                       </td>
@@ -365,6 +428,21 @@ const LicenseManager = () => {
                   value={editForm.description}
                   onChange={e => setEditForm({ ...editForm, description: e.target.value })}
                 />
+                <input
+                  type="text"
+                  placeholder="Поставщик"
+                  className={styles.input}
+                  value={editForm.supplier}
+                  onChange={e => setEditForm({ ...editForm, supplier: e.target.value })}
+                />
+                <input
+                  type="number"
+                  step="0.01"
+                  placeholder="Стоимость (₽)"
+                  className={styles.input}
+                  value={editForm.cost}
+                  onChange={e => setEditForm({ ...editForm, cost: +e.target.value })}
+                />
                 <div className={styles.modalInputsGrid}>
                   <input
                     type="date"
@@ -383,7 +461,7 @@ const LicenseManager = () => {
               </div>
               <div className={styles.modalBtnGroup}>
                 <button onClick={saveEdit} className={styles.modalSaveBtn}>
-                  Сохранить изменения
+                  Сохранить
                 </button>
                 <button onClick={() => setEditingId(null)} className={styles.modalCancelBtn}>
                   Отмена
