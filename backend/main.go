@@ -43,7 +43,7 @@ func main() {
 	}
 	defer db.Close()
 
-	// Создаём таблицы
+	// === Создание таблиц ===
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS licenses (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -53,26 +53,26 @@ func main() {
 			max_uses INTEGER DEFAULT 5,
 			current_uses INTEGER DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			
-			-- ЭТО ТРИ НОВЫХ ПОЛЯ — ДОБАВЛЯЕМ, НИЧЕГО НЕ ЛОМАЯ
-			cost REAL DEFAULT 0,                    -- Стоимость ключа
-			supplier TEXT,                          -- Поставщик (например: ООО "СофтЛайн", Microsoft, 1С)
-			activated_on TEXT                       -- На каких рабочих местах (через запятую или JSON)
+			cost REAL DEFAULT 0,
+			supplier TEXT,
+			activated_on TEXT
 		);
 	`)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	
 	_, err = db.Exec(`
-	CREATE TABLE IF NOT EXISTS activation_log (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		license_key TEXT NOT NULL,
-		activated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		device_name TEXT,
-		browser TEXT
-	);
+		CREATE TABLE IF NOT EXISTS activation_log (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			license_key TEXT NOT NULL,
+			activated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			device_name TEXT,
+			browser TEXT
+		);
 	`)
 	if err != nil {
-	log.Fatal("Не удалось создать таблицу activation_log:", err)
+		log.Fatal("Не удалось создать activation_log:", err)
 	}
 
 	_, err = db.Exec(`
@@ -80,135 +80,177 @@ func main() {
 			key TEXT PRIMARY KEY,
 			value TEXT
 		);
-
-		-- Значения по умолчанию (один раз)
-		INSERT OR IGNORE INTO settings (key, value) VALUES 
-			('company_name', 'YourCompany LLC'),
-			('legal_name', 'ООО «Ваша Компания»'),
-			('support_email', 'support@yourcompany.com'),
-			('website', 'https://yourcompany.com'),
-			('eula_text', 'ЭТО КОНЕЧНОЕ ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ...'),
-			('privacy_policy', 'ПОЛИТИКА КОНФИДЕНЦИАЛЬНОСТИ...'),
-			('offer_text', 'ПУБЛИЧНАЯ ОФЕРТА...');	
 	`)
 	if err != nil {
-		log.Fatal("Ошибка создания таблиц:", err)
+		log.Fatal("Ошибка создания settings:", err)
 	}
 
+	// === Добавляем недостающие колонки (если вдруг старый БД) ===
 	db.Exec("ALTER TABLE licenses ADD COLUMN cost REAL DEFAULT 0")
 	db.Exec("ALTER TABLE licenses ADD COLUMN supplier TEXT")
 	db.Exec("ALTER TABLE licenses ADD COLUMN activated_on TEXT")
 
-	// === ЗАПОЛНЯЕМ НАСТРОЙКИ И ДОКУМЕНТЫ ПО УМОЛЧАНИЮ (БЕЗ ОШИБОК С КАВЫЧКАМИ) ===
+	// === Заполняем настройки компании ===
 	_, err = db.Exec(`
-	INSERT OR REPLACE INTO settings (key, value) VALUES
-	('company_name', 'LicenseCore Inc.'),
-	('legal_name', 'ООО «ЛицензКор»'),
-	('inn', '7712345678'),
-	('ogrn', '1234567890123'),
-	('legal_address', 'г. Москва, ул. Примерная, д. 10, офис 501'),
-	('support_email', 'support@licensecore.app'),
-	('website', 'https://licensecore.app'),
-
-	('eula_text', 
-	$ЕULA_TEXT$),
-
-	('privacy_policy', 
-	$PRIVACY_TEXT$),
-
-	('offer_text', 
-	$OFFER_TEXT$)
+		INSERT OR REPLACE INTO settings (key, value) VALUES
+		('company_name', 'LicenseCore Inc.'),
+		('legal_name', 'ООО «ЛицензКор»'),
+		('inn', '7712345678'),
+		('ogrn', '1234567890123'),
+		('legal_address', 'г. Москва, ул. Примерная, д. 10, офис 501'),
+		('support_email', 'support@licensecore.app'),
+		('website', 'https://licensecore.app')
 	`)
-
-	// А теперь вставляем тексты через отдельные Exec — так Go не ломается на кавычках
-	_, err =db.Exec("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", "eula_text",
-	`ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ (EULA)
-
-	Настоящее Лицензионное соглашение (далее — «Соглашение») заключается между {{company}} (далее — «Правообладатель») в лице {{legal_name}}, ИНН {{inn}}, ОГРН {{ogrn}}, и вами (физическим или юридическим лицом).
-
-	1. Предоставление лицензии
-	Правообладатель предоставляет вам неисключительную, непередаваемую лицензию на использование программного обеспечения в соответствии с приобретённым типом лицензии.
-
-	2. Ограничения
-	Запрещается:
-	• Декомпиляция, обратная разработка, модификация ПО
-	• Передача лицензии третьим лицам без письменного согласия
-	• Использование сверх лимита активаций
-
-	3. Срок действия
-	Лицензия действует до даты, указанной в вашем ключе, либо до отзыва Правообладателем.
-
-	4. Поддержка
-	Техническая поддержка осуществляется по email: {{support_email}}
-
-	5. Заключительные положения
-	Настоящее Соглашение регулируется законодательством Российской Федерации.
-
-	Дата вступления в силу: {{year}} год
-	{{company}}
-	{{legal_name}}
-	Адрес: {{legal_address}}
-	Email: {{support_email}}`)
-
-	_, err = db.Exec("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", "privacy_policy",
-	`ПОЛИТИКА КОНФИДЕНЦИАЛЬНОСТИ
-
-	{{company}} уважает вашу конфиденциальность.
-
-	1. Какие данные мы собираем
-	• Лицензионный ключ
-	• IP-адрес при активации
-	• Email (если указан)
-
-	2. Для чего используем
-	• Проверка валидности лицензии
-	• Борьба с пиратством
-	• Улучшение продукта
-
-	3. Мы НЕ собираем
-	• Личные данные пользователей ПО
-	• Содержимое жёсткого диска
-	• Пароли и платёжные данные
-
-	4. Хранение
-	Данные хранятся на защищённых серверах в ЕС и РФ. Срок хранения — 3 года.
-
-	5. Контакты
-	По всем вопросам: {{support_email}}
-
-	Настоящая политика актуальна на {{year}} год.
-	{{company}}, {{legal_name}}`)
-
-	_, err = db.Exec("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", "offer_text",
-	`ПУБЛИЧНАЯ ОФЕРТА
-
-	{{legal_name}}, в лице генерального директора, действующего на основании Устава, именуемое в дальнейшем «Исполнитель», публикует настоящий Договор-оферту.
-
-	1. Предмет оферты
-	Исполнитель оказывает услуги по предоставлению неисключительных лицензий на программное обеспечение LicenseCore.
-
-	2. Стоимость и порядок оплаты
-	Оплата производится через платёжные системы. Все цены указаны на сайте {{website}}.
-
-	3. Права и обязанности
-	Исполнитель гарантирует работоспособность ПО в течение срока лицензии.
-	Заказчик обязуется использовать ПО в соответствии с EULA.
-
-	4. Ответственность
-	Исполнитель не несёт ответственности за косвенные убытки.
-
-	5. Реквизиты
-	{{legal_name}}
-	ИНН {{inn}}, ОГРН {{ogrn}}
-	Юридический адрес: {{legal_address}}
-	Email: {{support_email}}
-	Сайт: {{website}}
-
-	Настоящая оферта считается акцептованной с момента оплаты.`)
 	if err != nil {
-		log.Printf("Ошибка заполнения документов: %v", err)
+		log.Println("Ошибка базовых настроек:", err)
 	}
 
+	// === Тексты документов (с плейсхолдерами) ===
+	docs := map[string]string{
+		"eula_text": `ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ (EULA)
+
+		Настоящее Лицензионное соглашение заключается между {{company_name}} ({{legal_name}}, ИНН {{inn}}, ОГРН {{ogrn}}) и вами.
+
+		1. Предоставление лицензии
+		Правообладатель предоставляет неисключительную лицензию на использование ПО.
+
+		2. Активация и рабочие места
+		Лицензия активируется на конкретных рабочих местах. Перечень активных рабочих мест приведён в Приложении ниже.
+
+		3. Ограничения
+		• Запрещается передача ключа третьим лицам
+		• Запрещается превышение лимита активаций
+
+		4. Срок действия
+		До даты истечения ключа или отзыва Правообладателем.
+
+		5. Поддержка
+		Email: {{support_email}}
+
+		Настоящее соглашение вступает в силу с момента активации.
+		{{company_name}}, {{year}} г.`,
+
+				"privacy_policy": `ПОЛИТИКА КОНФИДЕНЦИАЛЬНОСТИ
+
+		{{company_name}} уважает вашу конфиденциальность.
+
+		1. Собираемые данные
+		• Лицензионный ключ
+		• MAC-адрес устройства
+		• IP при активации
+
+		2. Цели обработки
+		• Проверка лицензии
+		• Формирование отчётов
+		• Защита от пиратства
+
+		3. Хранение
+		Данные хранятся 3 года на защищённых серверах в РФ.
+
+		4. Контакты
+		{{support_email}}
+
+		Актуально на {{year}} год.`,
+
+				"offer_text": `ПУБЛИЧНАЯ ОФЕРТА
+
+		{{legal_name}}, в лице директора, публикует оферту.
+
+		1. Предмет
+		Предоставление неисключительных лицензий на ПО LicenseCore.
+
+		2. Стоимость
+		Указана на сайте {{website}}
+
+		3. Акцепт
+		С момента оплаты.
+
+		Реквизиты:
+		{{legal_name}}
+		ИНН {{inn}} • ОГРН {{ogrn}}
+		{{legal_address}}
+		{{support_email}}`,
+
+				"payment_text": `ПЛАТЁЖНОЕ ПОРУЧЕНИЕ № ___ от {{current_date}}
+
+		Плательщик: {{company_name}}
+		ИНН {{inn}}
+
+		Получатель: {{legal_name}}
+		ИНН {{inn}}
+
+		Назначение платежа: Оплата лицензий LicenseCore
+		Сумма: ____________________ руб.
+
+		Директор ____________________ /Иванов И.И./`,
+
+				"invoice_text": `ТОВАРНАЯ НАКЛАДНАЯ № ___ от {{current_date}}
+
+		Поставщик: {{legal_name}}, ИНН {{inn}}, ОГРН {{ogrn}}
+		Покупатель: {{company_name}}
+
+		№ | Наименование                          | Кол-во | Цена     | Сумма
+		--|---------------------------------------|--------|----------|----------
+		1 | Неисключительная лицензия LicenseCore | 1      | ______   | ______
+
+		Итого: ______ руб.
+
+		Директор ____________________ /Иванов И.И./`,
+	}
+
+	for key, text := range docs {
+		_, err = db.Exec("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", key, text)
+		if err != nil {
+			log.Printf("Ошибка сохранения %s: %v", key, err)
+		}
+	}
+
+	// === Универсальный рендер документов ===
+	renderDoc := func(w http.ResponseWriter, key, title string) {
+		var data struct {
+			CompanyName, LegalName, INN, OGRN, Address, Email, Website, Year, Date string
+		}
+		db.QueryRow("SELECT COALESCE(value,'LicenseCore Inc.') FROM settings WHERE key='company_name'").Scan(&data.CompanyName)
+		db.QueryRow("SELECT COALESCE(value,'ООО «ЛицензКор»') FROM settings WHERE key='legal_name'").Scan(&data.LegalName)
+		db.QueryRow("SELECT COALESCE(value,'7712345678') FROM settings WHERE key='inn'").Scan(&data.INN)
+		db.QueryRow("SELECT COALESCE(value,'1234567890123') FROM settings WHERE key='ogrn'").Scan(&data.OGRN)
+		db.QueryRow("SELECT COALESCE(value,'г. Москва...') FROM settings WHERE key='legal_address'").Scan(&data.Address)
+		db.QueryRow("SELECT COALESCE(value,'support@licensecore.app') FROM settings WHERE key='support_email'").Scan(&data.Email)
+		db.QueryRow("SELECT COALESCE(value,'https://licensecore.app') FROM settings WHERE key='website'").Scan(&data.Website)
+		data.Year = strconv.Itoa(time.Now().Year())
+		data.Date = time.Now().Format("02.01.2006")
+
+		var raw string
+		db.QueryRow("SELECT COALESCE(value,'') FROM settings WHERE key=?", key).Scan(&raw)
+
+		replacer := strings.NewReplacer(
+			"{{company_name}}", data.CompanyName,
+			"{{legal_name}}", data.LegalName,
+			"{{inn}}", data.INN,
+			"{{ogrn}}", data.OGRN,
+			"{{legal_address}}", data.Address,
+			"{{support_email}}", data.Email,
+			"{{website}}", data.Website,
+			"{{year}}", data.Year,
+			"{{current_date}}", data.Date,
+		)
+		content := replacer.Replace(raw)
+
+		html := fmt.Sprintf(`<!DOCTYPE html>
+<html lang="ru"><head><head><meta charset="utf-8"><title>%s</title>
+<style>body{font-family:system-ui,sans-serif;max-width:900px;margin:40px auto;line-height:1.8;color:#1f2937;}
+h1{color:#4f46e5;text-align:center;} table{width:100%%;border-collapse:collapse;margin:40px 0;}
+th,td{border:1px solid #ddd;padding:12px;} th{background:#4f46e5;color:white;}
+.footer{margin-top:80px;text-align:center;color:#666;font-size:0.9em;}</style>
+</head><body><h1>%s</h1><div style="white-space:pre-wrap">%s</div>
+<div class="footer">© %s %s • ИНН %s • %s</div></body></html>`,
+			title, title, content, data.Year, data.CompanyName, data.INN, data.Email)
+
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, html)
+	}
+
+	// === Маршруты ===
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/licenses", handleLicenses)
 	mux.HandleFunc("/api/licenses/", handleLicenseByID)
@@ -217,12 +259,148 @@ func main() {
 	mux.HandleFunc("/api/stats/chart", handleActivationsChart)
 	mux.HandleFunc("/api/licenses/import", handleImport)
 	mux.HandleFunc("/api/licenses/export", handleExport)
-
-	mux.HandleFunc("/api/settings", handleSettings)           // GET + POST
-	mux.HandleFunc("/api/docs/eula", handleDocEULA)           // HTML документ
-	mux.HandleFunc("/api/docs/privacy", handleDocPrivacy)     // HTML
-	mux.HandleFunc("/api/docs/offer", handleDocOffer)         // HTML
+	mux.HandleFunc("/api/settings", handleSettings)
 	mux.HandleFunc("/api/workplaces", handleWorkplaces)
+
+	// Документы
+	mux.HandleFunc("/api/docs/eula", func(w http.ResponseWriter, r *http.Request) { renderDoc(w, "eula_text", "Лицензионное соглашение (EULA)") })
+	mux.HandleFunc("/api/docs/privacy", func(w http.ResponseWriter, r *http.Request) { renderDoc(w, "privacy_policy", "Политика конфиденциальности") })
+	mux.HandleFunc("/api/docs/offer", func(w http.ResponseWriter, r *http.Request) { renderDoc(w, "offer_text", "Публичная оферта") })
+	mux.HandleFunc("/api/docs/payment", func(w http.ResponseWriter, r *http.Request) { renderDoc(w, "payment_text", "Платёжное поручение") })
+	mux.HandleFunc("/api/docs/invoice", func(w http.ResponseWriter, r *http.Request) { renderDoc(w, "invoice_text", "Товарная накладная") })
+
+	// Живая таблица рабочих мест в EULA — с фильтром по выбранному кабинету
+	mux.HandleFunc("/api/docs/eula-table", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	
+		// === Загружаем конфиг рабочих мест ===
+		var config struct {
+			Rooms   []string        `json:"rooms"`
+			Devices []map[string]any `json:"devices"`
+		}
+	
+		var jsonStr string
+		if err := db.QueryRow("SELECT COALESCE(value, '') FROM settings WHERE key='workplaces_config'").Scan(&jsonStr); err == nil && jsonStr != "" {
+			json.Unmarshal([]byte(jsonStr), &config)
+		}
+	
+		// === Фильтр по выбранному кабинету (индекс) ===
+		var roomFilter string
+		db.QueryRow("SELECT COALESCE(value, '') FROM settings WHERE key='eula_room_filter'").Scan(&roomFilter)
+	
+		// === Функция: получаем название кабинета по индексу ===
+		getRoomName := func(idx any) string {
+			if idx == nil {
+				return "Без кабинета"
+			}
+			// Приводим к строке
+			var index int
+			switch v := idx.(type) {
+			case float64:
+				index = int(v)
+			case string:
+				fmt.Sscanf(v, "%d", &index)
+			default:
+				return "Неизвестно"
+			}
+	
+			if index >= 0 && index < len(config.Rooms) {
+				return config.Rooms[index]
+			}
+			return fmt.Sprintf("Кабинет %d", index)
+		}
+	
+		html := `<div style="margin:60px auto;padding:40px;background:#f8f9ff;border-radius:20px;border:3px solid #6366f1;font-family:system-ui,sans-serif;">
+			<h2 style="text-align:center;color:#6366f1;font-size:28px;margin-bottom:30px;">
+				Приложение: Активные рабочие места
+			</h2>`
+	
+		var devicesToShow []map[string]any
+	
+		for _, dev := range config.Devices {
+			roomIDRaw := dev["roomId"]
+			var roomIDStr string
+			switch v := roomIDRaw.(type) {
+			case float64:
+				roomIDStr = fmt.Sprintf("%.0f", v)
+			case string:
+				roomIDStr = v
+			default:
+				roomIDStr = ""
+			}
+	
+			if roomFilter != "" && roomIDStr != roomFilter {
+				continue
+			}
+	
+			devicesToShow = append(devicesToShow, dev)
+		}
+	
+		if len(devicesToShow) == 0 {
+			msg := "Нет активных устройств"
+			if roomFilter != "" && len(config.Rooms) > 0 {
+				idx, _ := strconv.Atoi(roomFilter)
+				if idx >= 0 && idx < len(config.Rooms) {
+					msg = fmt.Sprintf("В кабинете <strong>%s</strong> нет активных устройств", config.Rooms[idx])
+				}
+			}
+			html += `<p style="text-align:center;color:#64748b;font-size:18px;">` + msg + `</p></div>`
+		} else {
+			html += `<table style="width:100%;border-collapse:collapse;background:white;border-radius:12px;overflow:hidden;box-shadow:0 10px 30px rgba(0,0,0,0.1);">
+				<thead><tr style="background:#6366f1;color:white;">
+					<th style="padding:16px;">Кабинет</th>
+					<th style="padding:16px;">MAC-адрес</th>
+					<th style="padding:16px;">Тип</th>
+					<th style="padding:16px;">Статус</th>
+				</tr></thead><tbody>`
+	
+			for _, d := range devicesToShow {
+				mac := "—"
+				if m, ok := d["mac"]; ok && m != nil {
+					mac = fmt.Sprintf("%v", m)
+					if mac == "" || mac == "<nil>" {
+						mac = "—"
+					}
+				}
+	
+				status, color := "Не проверен", "#64748b"
+				if s, ok := d["status"].(string); ok {
+					if s == "active" {
+						status, color = "Активен", "#22c55e"
+					} else if s == "expired" {
+						status, color = "Истёк", "#ef4444"
+					}
+				}
+	
+				typ := "Неизвестно"
+				if t, ok := d["type"].(string); ok {
+					switch t {
+					case "desktop": typ = "ПК"
+					case "laptop": typ = "Ноутбук"
+					case "tablet": typ = "Планшет"
+					case "server": typ = "Сервер"
+					}
+				}
+	
+				roomName := getRoomName(d["roomId"])
+	
+				html += fmt.Sprintf(`<tr>
+					<td style="padding:14px;font-weight:bold;">%s</td>
+					<td style="padding:14px;font-family:monospace;background:#f0e6ff;">%s</td>
+					<td style="padding:14px;">%s</td>
+					<td style="padding:14px;font-weight:bold;color:%s;">%s</td>
+				</tr>`, roomName, mac, typ, color, status)
+			}
+	
+			html += `</tbody></table>`
+		}
+	
+		html += `<p style="text-align:center;margin-top:30px;color:#64748b;font-size:14px;">
+			Сформировано: <strong>` + time.Now().Format("02.01.2006 в 15:04") + `</strong>
+		</p></div>`
+	
+		fmt.Fprint(w, html)
+	})
 
 	fmt.Println("Сервер запущен → http://localhost:8080")
 	log.Fatal(http.ListenAndServe(":8080", corsMiddleware(mux)))
@@ -704,6 +882,9 @@ func handleSettings(w http.ResponseWriter, r *http.Request) {
 
 	case "POST":
 		var input map[string]string
+		if val, ok := input["eula_table_title"]; ok && val == "" {
+			delete(input, "eula_table_title") 
+		}
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 			http.Error(w, "Invalid JSON", 400)
 			return
@@ -722,46 +903,48 @@ func handleSettings(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// === ГЕНЕРАЦИЯ ДОКУМЕНТОВ С ПОЛНЫМИ ДАННЫМИ ===
-func renderDoc(w http.ResponseWriter, key, title string) {
-	var tpl struct {
-		Company, Legal, Email, Website, INN, OGRN, Address string
-	}
+// // === Универсальная функция рендера документов ===
+// renderDoc := func(w http.ResponseWriter, key, title string) {
+//     var data struct {
+//         CompanyName, LegalName, INN, OGRN, Address, Email, Website, Year, Date string
+//     }
+//     db.QueryRow("SELECT COALESCE(value,'LicenseCore Inc.') FROM settings WHERE key='company_name'").Scan(&data.CompanyName)
+//     db.QueryRow("SELECT COALESCE(value,'ООО «ЛицензКор»') FROM settings WHERE key='legal_name'").Scan(&data.LegalName)
+//     db.QueryRow("SELECT COALESCE(value,'7712345678') FROM settings WHERE key='inn'").Scan(&data.INN)
+//     db.QueryRow("SELECT COALESCE(value,'1234567890123') FROM settings WHERE key='ogrn'").Scan(&data.OGRN)
+//     db.QueryRow("SELECT COALESCE(value,'г. Москва, ул. Примерная, д. 10') FROM settings WHERE key='legal_address'").Scan(&data.Address)
+//     db.QueryRow("SELECT COALESCE(value,'support@licensecore.app') FROM settings WHERE key='support_email'").Scan(&data.Email)
+//     db.QueryRow("SELECT COALESCE(value,'https://licensecore.app') FROM settings WHERE key='website'").Scan(&data.Website)
+//     data.Year = strconv.Itoa(time.Now().Year())
+//     data.Date = time.Now().Format("02.01.2006")
 
-	db.QueryRow("SELECT COALESCE(value,'LicenseCore Inc.') FROM settings WHERE key='company_name'").Scan(&tpl.Company)
-	db.QueryRow("SELECT COALESCE(value,'ООО «ЛицензКор»') FROM settings WHERE key='legal_name'").Scan(&tpl.Legal)
-	db.QueryRow("SELECT COALESCE(value,'support@licensecore.app') FROM settings WHERE key='support_email'").Scan(&tpl.Email)
-	db.QueryRow("SELECT COALESCE(value,'https://licensecore.app') FROM settings WHERE key='website'").Scan(&tpl.Website)
-	db.QueryRow("SELECT COALESCE(value,'7712345678') FROM settings WHERE key='inn'").Scan(&tpl.INN)
-	db.QueryRow("SELECT COALESCE(value,'1234567890123') FROM settings WHERE key='ogrn'").Scan(&tpl.OGRN)
-	db.QueryRow("SELECT COALESCE(value,'г. Москва, ул. Примерная, д. 10') FROM settings WHERE key='legal_address'").Scan(&tpl.Address)
+//     var raw string
+//     db.QueryRow("SELECT COALESCE(value,'') FROM settings WHERE key=?", key).Scan(&raw)
 
-	var text string
-	db.QueryRow("SELECT COALESCE(value, 'Документ не настроен') FROM settings WHERE key=?", key).Scan(&text)
+//     replacer := strings.NewReplacer(
+//         "{{company_name}}", data.CompanyName,
+//         "{{legal_name}}", data.LegalName,
+//         "{{inn}}", data.INN,
+//         "{{ogrn}}", data.OGRN,
+//         "{{legal_address}}", data.Address,
+//         "{{support_email}}", data.Email,
+//         "{{website}}", data.Website,
+//         "{{year}}", data.Year,
+//         "{{current_date}}", data.Date,
+//     )
+//     content := replacer.Replace(raw)
 
-	replacer := strings.NewReplacer(
-		"{{company}}", tpl.Company,
-		"{{legal}}", tpl.Legal,
-		"{{email}}", tpl.Email,
-		"{{website}}", tpl.Website,
-		"{{year}}", strconv.Itoa(time.Now().Year()),
-		"{{inn}}", tpl.INN,
-		"{{ogrn}}", tpl.OGRN,
-		"{{legal_address}}", tpl.Address,
-	)
-	html := replacer.Replace(text)
+//     html := fmt.Sprintf(`<!DOCTYPE html>
+// <html><head><meta charset="utf-8"><title>%s</title>
+// <style>body{font-family:system-ui,sans-serif;max-width:900px;margin:40px auto;line-height:1.8;color:#1f2937;}
+// h1{color:#4f46e5;text-align:center;margin-bottom:40px;} table{width:100%%;border-collapse:collapse;margin:30px 0;}
+// th,td{border:1px solid #ddd;padding:12px;} th{background:#4f46e5;color:white;}
+// .footer{margin-top:80px;text-align:center;color:#666;font-size:0.9em;}</style>
+// </head><body><h1>%s</h1><div style="white-space:pre-wrap">%s</div>
+// <div class="footer">© %s %s • ИНН %s • %s</div></body></html>`,
+//         title, title, content, data.Year, data.CompanyName, data.INN, data.Email)
 
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<!DOCTYPE html>
-<html lang="ru"><head><meta charset="utf-8"><title>%s</title>
-<style>body{font-family:system-ui,sans-serif;max-width:900px;margin:40px auto;padding:20px;line-height:1.8;color:#1f2937;}
-h1{color:#4f46e5;text-align:center;} .footer{margin-top:80px;text-align:center;color:#6b7280;font-size:0.9em;}</style>
-</head><body><h1>%s</h1><div style="white-space:pre-wrap">%s</div>
-<div class="footer">© %d %s<br>ИНН %s • ОГРН %s<br>%s</div></body></html>`,
-		title, title, html, time.Now().Year(), tpl.Company, tpl.INN, tpl.OGRN, tpl.Email)
-}
+//     w.Header().Set("Content-Type", "text/html; charset=utf-8")
+//     fmt.Fprint(w, html)
+// }
 
-// Эти 3 функции — ОБЯЗАТЕЛЬНО ДОБАВЬ!
-func handleDocEULA(w http.ResponseWriter, r *http.Request)     { renderDoc(w, "eula_text", "Лицензионное соглашение (EULA)") }
-func handleDocPrivacy(w http.ResponseWriter, r *http.Request)  { renderDoc(w, "privacy_policy", "Политика конфиденциальности") }
-func handleDocOffer(w http.ResponseWriter, r *http.Request)    { renderDoc(w, "offer_text", "Публичная оферта") }

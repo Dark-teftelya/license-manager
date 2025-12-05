@@ -1,44 +1,63 @@
-// src/pages/Workplaces.jsx
+// src/pages/Workplaces.jsx — ФИНАЛЬНАЯ, НЕЛОМАЕМАЯ ВЕРСИЯ
 import React, { useState, useEffect, useRef } from 'react'
 
 export default function Workplaces() {
   const [devices, setDevices] = useState([])
-  const [rooms, setRooms] = useState([])
-  const [selectedRoomId, setSelectedRoomId] = useState(null)
+  const [rooms, setRooms] = useState([]) // [{index: 0, name: "..."}]
+  const [selectedRoomIndex, setSelectedRoomIndex] = useState(null)
   const [newRoomName, setNewRoomName] = useState('')
   const [scale, setScale] = useState(1)
   const containerRef = useRef(null)
 
-  // Загрузка с бэкенда
+  // === ЗАГРУЗКА + АВТОВЫБОР ПЕРВОГО КАБИНЕТА ===
   useEffect(() => {
     fetch('/api/workplaces')
       .then(r => r.json())
       .then(data => {
-        setRooms((data.rooms || []).map((name, i) => ({ id: i + 1, name })))
+        const loadedRooms = (data.rooms || []).map((name, index) => ({
+          index,
+          name
+        }))
+        setRooms(loadedRooms)
+
         const safeDevices = (data.devices || []).map(d => ({
           ...d,
           mac: d.mac || '',
           status: d.status || null,
-          x: d.x || 100,
-          y: d.y || 100,
-          roomId: d.roomId || null,
-          icon: d.icon || 'Desktop',
-          type: d.type || 'desktop'
+          x: Number(d.x) || 100,
+          y: Number(d.y) || 100,
+          roomId: d.roomId != null ? Number(d.roomId) : null,
+          type: d.type || 'desktop',
         }))
         setDevices(safeDevices)
+
+        // АВТОВЫБОР ПЕРВОГО КАБИНЕТА ПРИ ЗАГРУЗКЕ
+        if (loadedRooms.length > 0 && selectedRoomIndex === null) {
+          setSelectedRoomIndex(loadedRooms[0].index)
+        }
       })
       .catch(() => {})
   }, [])
 
-  const visibleDevices = selectedRoomId === null
+  // Если кабинеты изменились (например, удалили текущий) — выбираем первый
+  useEffect(() => {
+    if (rooms.length > 0 && (selectedRoomIndex === null || !rooms.find(r => r.index === selectedRoomIndex))) {
+      setSelectedRoomIndex(rooms[0].index)
+    }
+  }, [rooms, selectedRoomIndex])
+
+  const visibleDevices = selectedRoomIndex === null
     ? devices
-    : devices.filter(d => d.roomId === selectedRoomId)
+    : devices.filter(d => d.roomId === selectedRoomIndex)
 
   const createRoom = () => {
     if (!newRoomName.trim()) return
-    const room = { id: Date.now(), name: newRoomName.trim() }
-    setRooms(prev => [...prev, room])
-    setSelectedRoomId(room.id)
+    const newRoom = {
+      index: rooms.length,
+      name: newRoomName.trim()
+    }
+    setRooms(prev => [...prev, newRoom])
+    setSelectedRoomIndex(newRoom.index)
     setNewRoomName('')
   }
 
@@ -53,20 +72,18 @@ export default function Workplaces() {
     x = Math.round(x / 100) * 100
     y = Math.round(y / 100) * 100
 
-    const mac = prompt('Введите MAC-адрес устройства:\n(например: 00:1A:2B:3C:4D:5E)', '00:1A:2B:3C:4D:5E')
-    if (!mac) return
-    if (!/^([0-9A-F]{2}[:-]){5}([0-9A-F]{2})$/i.test(mac.trim())) {
-      alert('Неверный формат MAC-адреса!')
+    const mac = prompt('Введите MAC-адрес устройства:', '00:1A:2B:3C:4D:5E')
+    if (!mac || !/^([0-9A-F]{2}[:-]){5}[0-9A-F]{2}$/i.test(mac.trim())) {
+      alert('Неверный MAC!')
       return
     }
 
     setDevices(prev => [...prev, {
       id: Date.now(),
       mac: mac.trim().toUpperCase(),
-      icon: type === 'desktop' ? 'Desktop' : type === 'laptop' ? 'Laptop' : type === 'tablet' ? 'Tablet' : 'Server',
       type,
       x, y,
-      roomId: selectedRoomId,
+      roomId: selectedRoomIndex,
       status: null
     }])
   }
@@ -87,8 +104,8 @@ export default function Workplaces() {
     const device = devices.find(d => d.id === id)
     const newMac = prompt('Изменить MAC-адрес:', device.mac)
     if (!newMac) return
-    if (!/^([0-9A-F]{2}[:-]){5}([0-9A-F]{2})$/i.test(newMac.trim())) {
-      alert('Неверный формат MAC-адреса!')
+    if (!/^([0-9A-F]{2}[:-]){5}[0-9A-F]{2}$/i.test(newMac.trim())) {
+      alert('Неверный формат!')
       return
     }
     setDevices(prev => prev.map(d =>
@@ -97,13 +114,13 @@ export default function Workplaces() {
   }
 
   const deleteDevice = (id) => {
-    if (confirm('Удалить устройство навсегда?')) {
+    if (confirm('Удалить устройство?')) {
       setDevices(prev => prev.filter(d => d.id !== id))
     }
   }
 
   const checkKey = (id) => {
-    const key = prompt('Вставьте лицензионный ключ:')
+    const key = prompt('Вставьте ключ:')
     if (!key) return
 
     fetch('/api/licenses/validate', {
@@ -116,9 +133,9 @@ export default function Workplaces() {
         setDevices(prev => prev.map(d =>
           d.id === id ? { ...d, status: res.valid ? 'active' : 'expired' } : d
         ))
-        alert(res.valid ? 'Ключ активен!' : 'Ключ недействителен или истёк')
+        alert(res.valid ? 'Активен!' : 'Недействителен')
       })
-      .catch(() => alert('Ошибка сервера'))
+      .catch(() => alert('Ошибка'))
   }
 
   const save = () => {
@@ -129,9 +146,7 @@ export default function Workplaces() {
         rooms: rooms.map(r => r.name),
         devices: devices
       })
-    })
-      .then(() => alert('Схема сохранена навсегда!'))
-      .catch(() => alert('Ошибка сохранения'))
+    }).then(() => alert('Сохранено!'))
   }
 
   const handleWheel = (e) => {
@@ -139,6 +154,18 @@ export default function Workplaces() {
     e.preventDefault()
     const delta = e.deltaY > 0 ? 0.9 : 1.1
     setScale(prev => Math.max(0.3, Math.min(2, prev * delta)))
+  }
+
+  // УДАЛЕНИЕ КАБИНЕТА — БЕЗ СЪЕЗДА!
+  const deleteRoom = (indexToDelete) => {
+    if (!confirm(`Удалить "${rooms.find(r => r.index === indexToDelete)?.name}" и все устройства в нём?`)) return
+
+    setRooms(prev => prev.filter(r => r.index !== indexToDelete))
+    setDevices(prev => prev.filter(d => d.roomId !== indexToDelete))
+
+    if (selectedRoomIndex === indexToDelete) {
+      setSelectedRoomIndex(rooms.length > 1 ? rooms[0].index : null)
+    }
   }
 
   return (
@@ -149,7 +176,7 @@ export default function Workplaces() {
         </h1>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 md:gap-8">
-          {/* Левый блок */}
+          {/* Левый блок — без изменений */}
           <div className="lg:col-span-2 bg-white rounded-3xl shadow-2xl p-6 md:p-8">
             <h2 className="text-2xl md:text-3xl font-bold mb-6 md:mb-8 text-indigo-700">Добавить устройство</h2>
             <div className="space-y-6 md:space-y-8">
@@ -159,144 +186,78 @@ export default function Workplaces() {
                 { type: 'tablet',  label: 'Планшет',   img: '/tablet.png'  },
                 { type: 'server',  label: 'Сервер',    img: '/server.png'  },
               ].map(t => (
-                <div
-                  key={t.type}
-                  draggable
-                  onDragStart={e => e.dataTransfer.setData('deviceType', t.type)}
-                  className="bg-gradient-to-br from-purple-100 via-pink-100 to-purple-100 
-                             p-8 md:p-10 rounded-3xl text-center cursor-grab active:cursor-grabbing 
-                             hover:scale-110 transition-all shadow-xl border-4 border-purple-200 
-                             hover:border-purple-500 hover:shadow-2xl"
-                >
-                  <img 
-                    src={t.img} 
-                    alt={t.label} 
-                    className="w-28 h-28 md:w-32 md:h-32 mx-auto mb-4 object-contain drop-shadow-2xl"
-                    draggable={false}
-                  />
-                  <div className="font-bold text-purple-800 text-lg md:text-xl tracking-wide">
-                    {t.label}
-                  </div>
+                <div key={t.type} draggable onDragStart={e => e.dataTransfer.setData('deviceType', t.type)}
+                  className="bg-gradient-to-br from-purple-100 via-pink-100 to-purple-100 p-8 md:p-10 rounded-3xl text-center cursor-grab active:cursor-grabbing hover:scale-110 transition-all shadow-xl border-4 border-purple-200 hover:border-purple-500 hover:shadow-2xl">
+                  <img src={t.img} alt={t.label} className="w-28 h-28 md:w-32 md:h-32 mx-auto mb-4 object-contain drop-shadow-2xl" draggable={false} />
+                  <div className="font-bold text-purple-800 text-lg md:text-xl tracking-wide">{t.label}</div>
                 </div>
               ))}
             </div>
           </div>
 
-         {/* Центральный блок — с идеальной сеткой и зумом */}
-        <div className="lg:col-span-7">
-        <div className="relative bg-white rounded-3xl shadow-2xl overflow-hidden border-8 border-gray-200" style={{ minHeight: '148vh' }}>
-            
-            {/* Обёртка с зумом */}
-            <div
-            ref={containerRef}
-            className="absolute inset-0"
-            onWheel={handleWheel}
-            onDrop={handleDropNew}
-            onDragOver={e => e.preventDefault()}
-            style={{ cursor: scale > 1 ? 'grab' : 'default' }}
-            >
-            <div
-                className="absolute inset-0 origin-top-left"
-                style={{
-                transform: `scale(${scale})`,
-                width: `${100 / scale}%`,
-                height: `${100 / scale}%`,
-                }}
-            >
-                {/* Сетка — всегда чёткая */}
-                <div
-                className="absolute inset-0 opacity-30"
-                style={{
-                    backgroundImage: `
-                    linear-gradient(to right, #cbd5e1 1px, transparent 1px),
-                    linear-gradient(to bottom, #cbd5e1 1px, transparent 1px)
-                    `,
+          {/* Центральный блок — без изменений */}
+          <div className="lg:col-span-7">
+            <div className="relative bg-white rounded-3xl shadow-2xl overflow-hidden border-8 border-gray-200" style={{ minHeight: '148vh' }}>
+              <div ref={containerRef} className="absolute inset-0" onWheel={handleWheel} onDrop={handleDropNew} onDragOver={e => e.preventDefault()} style={{ cursor: scale > 1 ? 'grab' : 'default' }}>
+                <div className="absolute inset-0 origin-top-left" style={{ transform: `scale(${scale})`, width: `${100 / scale}%`, height: `${100 / scale}%` }}>
+                  <div className="absolute inset-0 opacity-30" style={{
+                    backgroundImage: `linear-gradient(to right, #cbd5e1 1px, transparent 1px), linear-gradient(to bottom, #cbd5e1 1px, transparent 1px)`,
                     backgroundSize: `${100 * scale}px ${100 * scale}px`,
-                }}
-                />
+                  }} />
 
-                {/* Устройства */}
-                {visibleDevices.map(d => {
-                const iconPath = 
-                    d.type === 'desktop' || d.icon === 'Desktop' ? '/desktop.png' :
-                    d.type === 'laptop'  || d.icon === 'Laptop'  ? '/laptop.png'  :
-                    d.type === 'tablet'  || d.icon === 'Tablet'  ? '/tablet.png'  : '/server.png'
+                  {visibleDevices.map(d => {
+                    const iconPath = d.type === 'desktop' ? '/desktop.png' :
+                                    d.type === 'laptop'  ? '/laptop.png'  :
+                                    d.type === 'tablet'  ? '/tablet.png'  : '/server.png'
 
-                return (
-                    <div
-                    key={d.id}
-                    draggable
-                    onDragEnd={e => handleDeviceMove(d.id, e)}
-                    className={`absolute w-80 p-8 bg-white rounded-3xl shadow-2xl border-4 cursor-move select-none transition-all hover:scale-105 hover:shadow-3xl z-10 ${
-                        d.status === 'active' ? 'border-green-500 bg-green-50' : 
-                        d.status === 'expired' ? 'border-red-500 bg-red-50' : 
-                        'border-purple-400 bg-purple-50'
-                    }`}
-                    style={{
-                        left: d.x,
-                        top: d.y,
-                        transform: 'translate(-50%, -50%)'
-                    }}
-                    >
-                    <div className="flex justify-center mb-4">
-                        <img src={iconPath} alt="device" className="w-32 h-32 object-contain drop-shadow-2xl" draggable={false} />
-                    </div>
-
-                    <div className="font-mono text-center text-purple-800 text-xl font-black tracking-wider break-all bg-gray-100 py-3 px-4 rounded-xl">
-                        {d.mac || 'MAC не задан'}
-                    </div>
-
-                    {d.status && (
-                        <div className={`text-center mt-4 font-bold text-xl px-6 py-3 rounded-xl ${
-                        d.status === 'active' 
-                            ? 'bg-green-100 text-green-700 border-2 border-green-500' 
-                            : 'bg-red-100 text-red-700 border-2 border-red-500'
-                        }`}>
-                        {d.status === 'active' ? 'Ключ активен' : 'Ключ истёк'}
+                    return (
+                      <div key={d.id} draggable onDragEnd={e => handleDeviceMove(d.id, e)}
+                        className={`absolute w-80 p-8 bg-white rounded-3xl shadow-2xl border-4 cursor-move select-none transition-all hover:scale-105 hover:shadow-3xl z-10 ${
+                          d.status === 'active' ? 'border-green-500 bg-green-50' : 
+                          d.status === 'expired' ? 'border-red-500 bg-red-50' : 
+                          'border-purple-400 bg-purple-50'
+                        }`}
+                        style={{ left: d.x, top: d.y, transform: 'translate(-50%, -50%)' }}>
+                        <div className="flex justify-center mb-4">
+                          <img src={iconPath} alt="device" className="w-32 h-32 object-contain drop-shadow-2xl" draggable={false} />
                         </div>
-                    )}
-
-                    <div className="grid grid-cols-2 gap-4 mt-6">
-                        <button onClick={() => editMac(d.id)} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-2xl text-lg">
-                        Изменить
+                        <div className="font-mono text-center text-purple-800 text-xl font-black tracking-wider break-all bg-gray-100 py-3 px-4 rounded-xl">
+                          {d.mac || 'MAC не задан'}
+                        </div>
+                        {d.status && (
+                          <div className={`text-center mt-4 font-bold text-xl px-6 py-3 rounded-xl ${d.status === 'active' ? 'bg-green-100 text-green-700 border-2 border-green-500' : 'bg-red-100 text-red-700 border-2 border-red-500'}`}>
+                            {d.status === 'active' ? 'Активен' : 'Истёк'}
+                          </div>
+                        )}
+                        <div className="grid grid-cols-2 gap-4 mt-6">
+                          <button onClick={() => editMac(d.id)} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-2xl text-lg">Изменить</button>
+                          <button onClick={() => deleteDevice(d.id)} className="bg-red-600 hover:bg-red-700 text-white font-bold py-3 rounded-2xl text-lg">Удалить</button>
+                        </div>
+                        <button onClick={() => checkKey(d.id)} className="mt-4 w-full bg-gradient-to-r from-indigo-600 to-purple-700 hover:from-indigo-700 hover:to-purple-800 text-white font-black py-4 rounded-2xl text-xl">
+                          Проверить ключ
                         </button>
-                        <button onClick={() => deleteDevice(d.id)} className="bg-red-600 hover:bg-red-700 text-white font-bold py-3 rounded-2xl text-lg">
-                        Удалить
-                        </button>
-                    </div>
+                      </div>
+                    )
+                  })}
 
-                    <button
-                        onClick={() => checkKey(d.id)}
-                        className="mt-4 w-full bg-gradient-to-r from-indigo-600 to-purple-700 hover:from-indigo-700 hover:to-purple-800 text-white font-black py-4 rounded-2xl text-xl"
-                    >
-                        Проверить ключ
-                    </button>
+                  {visibleDevices.length === 0 && (
+                    <div className="absolute inset-0 flex items-center justify-center text-5xl text-gray-300 pointer-events-none font-light">
+                      {selectedRoomIndex !== null ? 'Перетащите устройства сюда' : 'Выберите или создайте кабинет'}
                     </div>
-                )
-                })}
-
-                {/* Плейсхолдер */}
-                {visibleDevices.length === 0 && (
-                <div className="absolute inset-0 flex items-center justify-center text-5xl text-gray-300 pointer-events-none font-light">
-                    {selectedRoomId ? 'Перетащите устройства сюда' : 'Выберите или создайте кабинет'}
+                  )}
                 </div>
-                )}
-            </div>
-            </div>
+              </div>
 
-            {/* Индикатор масштаба */}
-            <div className="absolute bottom-4 right-4 z-20 bg-black/75 text-white px-5 py-3 rounded-full font-bold text-sm backdrop-blur-sm shadow-lg">
-            {Math.round(scale * 100)}%
+              <div className="absolute bottom-4 right-4 z-20 bg-black/75 text-white px-5 py-3 rounded-full font-bold text-sm backdrop-blur-sm shadow-lg">
+                {Math.round(scale * 100)}%
+              </div>
+              <div className="absolute top-4 left-4 z-20 bg-black/70 text-white px-4 py-2 rounded-lg text-xs backdrop-blur-sm">
+                Ctrl + колёсико = масштаб
+              </div>
             </div>
+          </div>
 
-            {/* Подсказка */}
-            <div className="absolute top-4 left-4 z-20 bg-black/70 text-white px-4 py-2 rounded-lg text-xs backdrop-blur-sm">
-            Ctrl + колёсико = масштаб
-            </div>
-        </div>
-        </div>
-
-          {/* Правый блок */}
+          {/* Правый блок — с удалением */}
           <div className="lg:col-span-3 bg-white rounded-3xl shadow-2xl p-6 md:p-8">
             <h2 className="text-2xl md:text-3xl font-bold mb-6 text-purple-700">Кабинеты</h2>
 
@@ -316,20 +277,31 @@ export default function Workplaces() {
 
             <div className="space-y-4">
               {rooms.map(room => (
-                <button
-                  key={room.id}
-                  onClick={() => setSelectedRoomId(room.id)}
-                  className={`w-full text-left p-6 rounded-2xl border-4 transition-all ${
-                    selectedRoomId === room.id
-                      ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white border-purple-800 shadow-2xl'
-                      : 'bg-purple-50 border-purple-300 hover:border-purple-500'
-                  }`}
-                >
-                  <div className="font-bold text-xl">{room.name}</div>
-                  <div className="text-sm opacity-80 mt-1">
-                    {devices.filter(d => d.roomId === room.id).length} устройств
-                  </div>
-                </button>
+                <div key={room.index} className="flex items-center gap-3 group">
+                  <button
+                    onClick={() => setSelectedRoomIndex(room.index)}
+                    className={`flex-1 text-left p-6 rounded-2xl border-4 transition-all ${
+                      selectedRoomIndex === room.index
+                        ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white border-purple-800 shadow-2xl'
+                        : 'bg-purple-50 border-purple-300 hover:border-purple-500'
+                    }`}
+                  >
+                    <div className="font-bold text-xl">{room.name}</div>
+                    <div className="text-sm opacity-80 mt-1">
+                      {devices.filter(d => d.roomId === room.index).length} устройств
+                    </div>
+                  </button>
+
+                  <button
+                    onClick={() => deleteRoom(room.index)}
+                    className="opacity-0 group-hover:opacity-100 p-3 bg-red-500 hover:bg-red-600 text-white rounded-xl shadow-lg transition-all duration-200 transform hover:scale-110"
+                    title="Удалить кабинет"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
+                </div>
               ))}
             </div>
           </div>

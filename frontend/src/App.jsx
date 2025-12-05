@@ -12,6 +12,7 @@ import DocsPage from './pages/DocsPage'
 import SettingsPage from './pages/SettingsPage'
 import NotFound from './pages/NotFound'
 import Workplaces from './pages/Workplaces'
+import Debug from './pages/Debug'
 
 // Защищённый роут
 const ProtectedRoute = ({ children }) => {
@@ -94,6 +95,8 @@ function App() {
           <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
           <Route path="/workplaces" element={<ProtectedRoute><Workplaces /></ProtectedRoute>} />
           
+          <Route path="/debug" element={<Debug />} />
+
           <Route path="*" element={<NotFound />} />
         </Routes>
       </div>
